@@ -1,0 +1,22 @@
+# Build output.
+/bin/
+/dist/
+# The binary when it is built in place. Anchored, or it would also swallow
+# cmd/papers.
+/papers
+
+# The corpus working directories, if somebody runs the tool from in here.
+/work/
+/pdf/
+/images/
+
+# Web app.
+/web/node_modules/
+/web/dist/
+/web/.astro/
+
+# Coverage.
+*.out
+*.test
+
+.DS_Store
