@@ -93,14 +93,15 @@ licence nobody has a rule for stays unknown, and unknown publishes nothing.
 		fmt.Println("dry run, nothing written")
 		return nil
 	}
-	if err := mergeSources(c, recorded, results); err != nil {
+	merged, err := mergeSources(c, recorded, results)
+	if err != nil {
 		return err
 	}
 	report := filepath.Join(c.Reports(), "resolve.md")
 	if err := os.MkdirAll(c.Reports(), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(report, []byte(sources.Markdown(results)), 0o644); err != nil {
+	if err := os.WriteFile(report, []byte(sources.Markdown(wholeCorpus(manifest, merged, results))), 0o644); err != nil {
 		return err
 	}
 	fmt.Println("wrote", c.SourcesManifest())
@@ -147,11 +148,17 @@ func selectPapers(manifest *corpus.Papers, recorded *corpus.Sources, ids, field 
 		case field != "" && string(p.Field) != field:
 			continue
 		}
-		if !again {
+		if rec, ok := recorded.ByID(p.ID); ok {
+			// A record a person decided is left alone whatever the flags say.
+			// --again means ask the services again, not throw away somebody's
+			// afternoon of reading a publisher's terms.
+			if rec.Hand() {
+				continue
+			}
 			// A paper with a record has been resolved. Doing it again costs a
 			// request to somebody else's free service for an answer already
 			// on disk, so it takes --again to ask for it.
-			if rec, ok := recorded.ByID(p.ID); ok && rec.URL != "" {
+			if !again && rec.URL != "" {
 				continue
 			}
 		}
@@ -188,7 +195,7 @@ func skipped(only string) map[string]bool {
 //
 // A record that was edited by hand wins over one this run produced, which is
 // the same rule as the top of the ladder and for the same reason.
-func mergeSources(c *corpus.Corpus, recorded *corpus.Sources, results []*sources.Result) error {
+func mergeSources(c *corpus.Corpus, recorded *corpus.Sources, results []*sources.Result) (map[string]corpus.Source, error) {
 	byID := index(recorded)
 	for _, res := range results {
 		if !res.OK() {
@@ -196,6 +203,13 @@ func mergeSources(c *corpus.Corpus, recorded *corpus.Sources, results []*sources
 		}
 		rec := res.Record
 		if old, ok := byID[rec.ID]; ok {
+			// Twice, because this is the one thing in the toolchain that can
+			// quietly undo a person's work. selectPapers does not offer a
+			// hand record to the ladder in the first place, and if one gets
+			// here anyway it is not written over.
+			if old.Hand() {
+				continue
+			}
 			// Keep everything the fetcher and the classifier wrote, because
 			// this command did not learn any of it and must not erase it.
 			rec.Fetched, rec.SHA256, rec.Pages = old.Fetched, old.SHA256, old.Pages
@@ -206,5 +220,36 @@ func mergeSources(c *corpus.Corpus, recorded *corpus.Sources, results []*sources
 		}
 		byID[rec.ID] = rec
 	}
-	return writeSources(c, byID)
+	return byID, writeSources(c, byID)
+}
+
+// wholeCorpus is every paper in the manifest, as a result, so that the report
+// describes the corpus and not the run.
+//
+// A paper this run resolved contributes its result, with its rung and its
+// near misses. A paper it did not touch contributes whatever sources.yaml
+// already says about it. A paper with neither is in the manifest and has
+// never been looked at, which is the most important line in the report and
+// the easiest one to lose.
+func wholeCorpus(manifest *corpus.Papers, merged map[string]corpus.Source, results []*sources.Result) []*sources.Result {
+	fresh := map[string]*sources.Result{}
+	for _, res := range results {
+		fresh[res.ID] = res
+	}
+	all := make([]*sources.Result, 0, len(manifest.Papers))
+	for _, p := range manifest.Papers {
+		if res, ok := fresh[p.ID]; ok {
+			all = append(all, res)
+			continue
+		}
+		if rec, ok := merged[p.ID]; ok {
+			all = append(all, sources.Prior(rec))
+			continue
+		}
+		all = append(all, &sources.Result{
+			ID:    p.ID,
+			Notes: []string{"no record in sources.yaml, so nothing has ever looked for it"},
+		})
+	}
+	return all
 }

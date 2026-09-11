@@ -3,14 +3,18 @@ package fetch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tamnd/papers-reader/corpus"
+	"github.com/tamnd/papers-reader/relay"
 )
 
 // pdf is a PDF only in the sense that matters here: it starts with the magic
@@ -109,6 +113,79 @@ func TestGetRefusesWhatIsNotAPaper(t *testing.T) {
 	}
 }
 
+// The floor is there to catch error pages, not short papers. RFC 896, which
+// is Nagle's congestion control paper, is a complete nine page PDF in 16,949
+// bytes, because it is text with no images in it. The old twenty kilobyte
+// floor threw it away, so this is the case that pins the new one down.
+func TestAShortPaperIsStillAPaper(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Write(pdf(16949))
+	})
+	dest := filepath.Join(t.TempDir(), "nagle-1984-congestion.pdf")
+	if _, err := fetcher(t).Get(context.Background(), srv.URL, dest); err != nil {
+		t.Fatalf("a complete sixteen kilobyte paper was refused: %v", err)
+	}
+}
+
+// The pair of tests that say what the stall clock is for. A download is
+// abandoned for going silent and never for taking its time, because a
+// departmental server from 2003 serving a large scan slowly is working and a
+// whole-request deadline cannot tell the two apart.
+func TestASlowDownloadIsNotAStalledOne(t *testing.T) {
+	body := pdf(Floor * 2)
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		for i := 0; i < len(body); i += 512 {
+			w.Write(body[i:min(i+512, len(body))])
+			w.(http.Flusher).Flush()
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
+	f := fetcher(t)
+	// Every chunk arrives well inside the stall window, and the whole
+	// download takes many times longer than it.
+	f.Stall = 40 * time.Millisecond
+	dest := filepath.Join(t.TempDir(), "slow.pdf")
+	got, err := f.Get(context.Background(), srv.URL, dest)
+	if err != nil {
+		t.Fatalf("a slow but healthy download was abandoned: %v", err)
+	}
+	if got.Bytes != int64(len(body)) {
+		t.Errorf("wrote %d bytes of %d", got.Bytes, len(body))
+	}
+}
+
+func TestAStalledDownloadIsAbandoned(t *testing.T) {
+	done := make(chan struct{})
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Write(pdf(Floor * 2))
+		w.(http.Flusher).Flush()
+		// Then nothing, ever, which is what a host that has given up on us
+		// without saying so looks like from here.
+		<-done
+	})
+	t.Cleanup(func() { close(done) })
+
+	f := fetcher(t)
+	f.Stall = 100 * time.Millisecond
+	dir := t.TempDir()
+	_, err := f.Get(context.Background(), srv.URL, filepath.Join(dir, "stalled.pdf"))
+	if err == nil {
+		t.Fatal("a download that stopped sending was accepted")
+	}
+	if !strings.Contains(err.Error(), "stopped sending") {
+		t.Errorf("the error is %q, and it should say the host went silent", err)
+	}
+	// Enough bytes arrived to pass every other check, so this is also the
+	// case where a stall could leave a plausible looking half a paper behind.
+	left, _ := os.ReadDir(dir)
+	if len(left) != 0 {
+		t.Errorf("a stalled download left %d files behind", len(left))
+	}
+}
+
 // Content-Type is the least trustworthy thing in the response, in both
 // directions. A PDF served as octet-stream is still a PDF.
 func TestTheBytesDecideAndNotTheHeader(t *testing.T) {
@@ -131,6 +208,110 @@ func TestGetStopsAtTheCeiling(t *testing.T) {
 	_, err := f.Get(context.Background(), srv.URL, filepath.Join(t.TempDir(), "paper.pdf"))
 	if err == nil || !errors.Is(err, ErrNotPDF) {
 		t.Fatalf("a download over the ceiling gave %v", err)
+	}
+}
+
+// The relay. Three papers in the corpus are held by hosts that answer 403 to
+// this network and 200 to another one, so the fetcher gets a second go from
+// somewhere else. What it will not do is relax any of the checks, because a
+// machine on another network is exactly where an unnoticed captcha page would
+// come back from.
+//
+// These tests run curl through /bin/sh rather than ssh, which is as close to
+// a second machine as a test can get without needing one.
+func hops(script string) *relay.Set {
+	return &relay.Set{Hops: []relay.Hop{{
+		Host: script,
+		Run: func(ctx context.Context, host string, argv []string) *exec.Cmd {
+			return exec.CommandContext(ctx, "/bin/sh", "-c", host)
+		},
+	}}}
+}
+
+func TestAHostThatRefusesThisNetworkIsTriedFromAnother(t *testing.T) {
+	body := pdf(Floor + 64)
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "go away", http.StatusForbidden)
+	})
+	far := filepath.Join(t.TempDir(), "far.pdf")
+	if err := os.WriteFile(far, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := fetcher(t)
+	f.Relay = hops(fmt.Sprintf("cat %s; printf '200 application/pdf\\n' >&2", far))
+
+	dest := filepath.Join(t.TempDir(), "paper.pdf")
+	got, err := f.Get(context.Background(), srv.URL, dest)
+	if err != nil {
+		t.Fatalf("the relay did not rescue a 403: %v", err)
+	}
+	if got.Bytes != int64(len(body)) {
+		t.Errorf("wrote %d bytes of %d", got.Bytes, len(body))
+	}
+	if _, err := os.Stat(dest); err != nil {
+		t.Errorf("the relayed download is not on disk: %v", err)
+	}
+}
+
+func TestARelayedDownloadIsCheckedLikeAnyOther(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "go away", http.StatusForbidden)
+	})
+	f := fetcher(t)
+	// A bot wall, served with a 200 and a straight face.
+	f.Relay = hops("printf '<html>are you a robot</html>'; printf '200 text/html\\n' >&2")
+
+	dir := t.TempDir()
+	_, err := f.Get(context.Background(), srv.URL, filepath.Join(dir, "paper.pdf"))
+	if err == nil {
+		t.Fatal("an HTML page came back through the relay and was accepted as a paper")
+	}
+	if left, _ := os.ReadDir(dir); len(left) != 0 {
+		t.Errorf("a refused relay left %d files behind", len(left))
+	}
+}
+
+func TestBothFailuresAreReported(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "go away", http.StatusForbidden)
+	})
+	f := fetcher(t)
+	f.Relay = hops("printf ''; printf '429 text/html\\n' >&2")
+
+	_, err := f.Get(context.Background(), srv.URL, filepath.Join(t.TempDir(), "paper.pdf"))
+	if err == nil {
+		t.Fatal("nothing was downloaded and no error came back")
+	}
+	for _, want := range []string{"403", "429"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error is %q, and it should say what both ends did", err)
+		}
+	}
+}
+
+// A file over the ceiling is over it from every network, and finding that out
+// twice costs a second download of something that was too big the first time.
+func TestTheCeilingIsNotWorthASecondOpinion(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write(pdf(Floor * 4))
+	})
+	tried := false
+	f := fetcher(t)
+	f.Ceiling = Floor * 2
+	f.Relay = &relay.Set{Hops: []relay.Hop{{
+		Host: "never",
+		Run: func(ctx context.Context, host string, argv []string) *exec.Cmd {
+			tried = true
+			return exec.CommandContext(ctx, "/bin/sh", "-c", "true")
+		},
+	}}}
+
+	_, err := f.Get(context.Background(), srv.URL, filepath.Join(t.TempDir(), "paper.pdf"))
+	if !errors.Is(err, ErrTooBig) {
+		t.Fatalf("got %v, want the too big error", err)
+	}
+	if tried {
+		t.Error("a book was downloaded a second time through the relay")
 	}
 }
 
@@ -159,7 +340,10 @@ func TestGetOnlyTalksHTTP(t *testing.T) {
 	}
 }
 
-func TestTheLicenceGate(t *testing.T) {
+// The download gate asks one question: is there somewhere to fetch from.
+// The copy lands in pdf/, which is never committed and never served, so a
+// restricted paper may be read on this machine like any other.
+func TestTheDownloadGate(t *testing.T) {
 	ok := corpus.Source{ID: "a", Access: corpus.AccessOpen, Licence: "CC BY 4.0", URL: "https://example.test/a.pdf"}
 	cases := []struct {
 		name string
@@ -169,10 +353,10 @@ func TestTheLicenceGate(t *testing.T) {
 		{"open with a licence", &ok, true},
 		{"public domain", &corpus.Source{ID: "a", Access: corpus.AccessPublicDomain, Licence: "public domain", URL: "u"}, true},
 		{"permissive", &corpus.Source{ID: "a", Access: corpus.AccessPermissive, Licence: "arXiv non-exclusive", URL: "u"}, true},
-		{"restricted", &corpus.Source{ID: "a", Access: corpus.AccessRestricted, Licence: "all rights reserved", URL: "u"}, false},
-		{"unknown", &corpus.Source{ID: "a", Access: corpus.AccessUnknown, URL: "u"}, false},
-		{"open with no licence", &corpus.Source{ID: "a", Access: corpus.AccessOpen, URL: "u"}, false},
-		{"open with no location", &corpus.Source{ID: "a", Access: corpus.AccessOpen, Licence: "CC BY 4.0"}, false},
+		{"restricted", &corpus.Source{ID: "a", Access: corpus.AccessRestricted, URL: "u"}, true},
+		{"open with no licence recorded", &corpus.Source{ID: "a", Access: corpus.AccessOpen, URL: "u"}, true},
+		{"unknown, which means nothing was found", &corpus.Source{ID: "a", Access: corpus.AccessUnknown, URL: "u"}, false},
+		{"no location", &corpus.Source{ID: "a", Access: corpus.AccessOpen, Licence: "CC BY 4.0"}, false},
 		{"no record at all", nil, false},
 		{"a class nobody has heard of", &corpus.Source{ID: "a", Access: corpus.Access("free-ish"), URL: "u"}, false},
 	}
@@ -181,6 +365,37 @@ func TestTheLicenceGate(t *testing.T) {
 			got, why := May(tc.rec)
 			if got != tc.want {
 				t.Errorf("May is %v, want %v, because %q", got, tc.want, why)
+			}
+			if !got && why == "" {
+				t.Error("the gate said no and did not say why")
+			}
+		})
+	}
+}
+
+// The licence gate has not moved. What may be downloaded and what may be
+// published are two different questions, and this is the one that decides
+// what goes into a public repository.
+func TestTheLicenceGate(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  *corpus.Source
+		want bool
+	}{
+		{"open with a licence", &corpus.Source{ID: "a", Access: corpus.AccessOpen, Licence: "CC BY 4.0", URL: "u"}, true},
+		{"public domain", &corpus.Source{ID: "a", Access: corpus.AccessPublicDomain, Licence: "public domain", URL: "u"}, true},
+		{"permissive", &corpus.Source{ID: "a", Access: corpus.AccessPermissive, Licence: "arXiv non-exclusive", URL: "u"}, true},
+		{"restricted, even with the file on disk", &corpus.Source{ID: "a", Access: corpus.AccessRestricted, URL: "u", SHA256: "abc"}, false},
+		{"unknown", &corpus.Source{ID: "a", Access: corpus.AccessUnknown, URL: "u"}, false},
+		{"open with no licence", &corpus.Source{ID: "a", Access: corpus.AccessOpen, URL: "u"}, false},
+		{"no record at all", nil, false},
+		{"a class nobody has heard of", &corpus.Source{ID: "a", Access: corpus.Access("free-ish"), URL: "u"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, why := Publish(tc.rec)
+			if got != tc.want {
+				t.Errorf("Publish is %v, want %v, because %q", got, tc.want, why)
 			}
 			if !got && why == "" {
 				t.Error("the gate said no and did not say why")
