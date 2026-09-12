@@ -75,7 +75,16 @@ jobs:
 
   # The toolchain exists to build one specific corpus, so the thing worth
   # testing is that it can read that corpus. This checks out tamnd/papers and
-  # runs the hard audit rules against it.
+  # runs the audit over it.
+  #
+  # Without --hard on purpose. A rule that fails here is a fact about the
+  # content of tamnd/papers and not about this program, and that repository
+  # runs the same audit with --hard and fails its own build on it. Failing
+  # this one as well would mean every pull request to the toolchain was red
+  # until somebody re-extracted a paper, which is how a red build stops
+  # meaning anything. What this job asserts is that the audit runs to the end
+  # over the real corpus, which is what catches a rule that panics on data no
+  # test fixture has.
   corpus:
     name: audit the corpus
     runs-on: ubuntu-latest
@@ -104,4 +113,8 @@ jobs:
       - name: audit
         env:
           PAPERS_CORPUS: ${{ github.workspace }}/papers
-        run: papers audit --hard
+        run: papers audit
+      - name: coverage
+        env:
+          PAPERS_CORPUS: ${{ github.workspace }}/papers
+        run: papers report coverage --quiet
