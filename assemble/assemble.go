@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"github.com/tamnd/papers-reader/code"
+	"github.com/tamnd/papers-reader/markdown"
 )
 
 // A Page is one extracted page as it sits in work/<id>/pages/NNNN.txt:
@@ -118,7 +119,7 @@ func Join(pages []Page) *Document {
 			d.Paragraphs = append(d.Paragraphs, Paragraph{Text: text, Page: p.Number, Pages: 1})
 		}
 	}
-	d.Paragraphs = fenced(d.Paragraphs)
+	d.Paragraphs = fenced(unprosed(d.Paragraphs))
 	return d
 }
 
@@ -159,6 +160,56 @@ func Join(pages []Page) *Document {
 // Nothing here fences a paragraph that arrived fenced. The layout path writes
 // its own fences and this is for the native path, which writes prose and
 // nothing else.
+// unprosed cuts the prose off the end of a listing that has some stuck to it.
+//
+// A paragraph is a run of lines between blank ones, and the page decides
+// where the blank ones are. Tarjan's page 12 ends the strongly connected
+// components algorithm with END; and sets THEOREM 13 on the next line, at the
+// same indentation and with no line between, because the theorem and the
+// algorithm it is about are one indented block on the page. So the theorem,
+// its statement and the whole of its proof arrive as part of the listing
+// paragraph, and every one of them goes inside the fence: two thirds of a
+// page of English set in monospace with no line wrapping.
+//
+// Emphasis is what tells them apart. The page sets a theorem statement in
+// italics and the reader writes that as *...*, and a program does not carry
+// emphasis: an asterisk in a listing is multiplication or a pointer and it
+// does not come in a matched pair around a phrase of English. So a trailing
+// run of lines that carry emphasis is where the listing stopped and the prose
+// started, and it becomes a paragraph of its own.
+//
+// Only the tail is cut, and only when there is a listing left in front of it.
+// Emphasis in the middle of a listing is a reader marking up a comment, which
+// is a different mistake with a different repair, and a paragraph that is
+// emphasis all the way down was never a listing to begin with.
+func unprosed(ps []Paragraph) []Paragraph {
+	out := make([]Paragraph, 0, len(ps))
+	for _, p := range ps {
+		lines := strings.Split(p.Text, "\n")
+		cut := len(lines)
+		for cut > 0 && emphasised(lines[cut-1]) {
+			cut--
+		}
+		if cut == 0 || cut == len(lines) || !listing(strings.Join(lines[:cut], "\n")) {
+			out = append(out, p)
+			continue
+		}
+		out = append(out,
+			Paragraph{Text: strings.Join(lines[:cut], "\n"), Page: p.Page, Pages: p.Pages},
+			Paragraph{Text: strings.TrimSpace(strings.Join(lines[cut:], "\n")), Page: p.Page, Pages: p.Pages},
+		)
+	}
+	return out
+}
+
+// emphasis is a phrase between a matched pair of asterisks or underscores,
+// which is how the reader writes the italics a page sets a theorem statement
+// in. The phrase has to hold a letter, so that a line of arithmetic with two
+// multiplications on it is not read as a phrase in italics.
+var emphasis = regexp.MustCompile(`(\*|_)[^*_\n]*\p{L}[^*_\n]*(\*|_)`)
+
+func emphasised(line string) bool { return emphasis.MatchString(line) }
+
 func fenced(ps []Paragraph) []Paragraph {
 	out := make([]Paragraph, 0, len(ps))
 	for i := 0; i < len(ps); {
@@ -192,8 +243,31 @@ func fenced(ps []Paragraph) []Paragraph {
 
 // listing says whether a paragraph is program text that is not already in a
 // fence.
+//
+// Fencing is a stronger claim than refusing to join, so it wants stronger
+// evidence, and program on its own is satisfied by a run of lines that end
+// in a semicolon. The clauses of a definition are written that way. Rabin
+// and Scott number theirs (i) to (iv), end three of the four with a
+// semicolon and never write a keyword or an assignment, and both of the
+// paragraphs that shape went into the corpus inside a ```text fence, which
+// is a page of mathematics rendered as a wall of monospace. So a paragraph
+// wants one of the marks that has no reading in English at all before it is
+// fenced, which is what code.Statement is for.
+//
+// A pipe table is not program text either, however much a run of rules
+// looks like one line by line. Table 1 of Hoare's paper is fourteen rows of
+// a formal proof, every row has an assignment in it, and the whole of it was
+// fenced on the strength of those assignments.
 func listing(s string) bool {
-	return opens(strings.TrimSpace(s)) == "" && program(s)
+	if opens(strings.TrimSpace(s)) != "" || markdown.IsTable(s) {
+		return false
+	}
+	for _, line := range strings.Split(s, "\n") {
+		if code.Statement(line) {
+			return program(s)
+		}
+	}
+	return false
 }
 
 // open is how many braces the text has left unclosed, which says whether a

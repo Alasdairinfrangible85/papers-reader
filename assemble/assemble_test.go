@@ -449,6 +449,27 @@ func TestProseIsNotFenced(t *testing.T) {
 	}
 }
 
+// The numbered clauses of a definition end in semicolons and are not a
+// program. Fenced they render as a wall of monospace with the mathematics
+// in them read as listing text, which is what happened to two paragraphs of
+// the Rabin and Scott paper.
+func TestNumberedClausesOfADefinitionAreNotFenced(t *testing.T) {
+	d := model("(i) $U$ is in $T$;\n(ii) $U$ is the union of some of the classes;\n(iii) the relation $E$ has finite index.\n")
+	if got := d.Text(); strings.Contains(got, "```") {
+		t.Errorf("a definition was fenced:\n%s", got)
+	}
+}
+
+// A row of a formal proof has an assignment in it and every row of the
+// table has one, which is enough marks to look like a program line by line.
+// Table 1 of Hoare's paper went into the corpus fenced on that evidence.
+func TestATableOfAssignmentsIsNotFenced(t *testing.T) {
+	d := model("| Line | Proof | Rule |\n| --- | --- | --- |\n| 1 | $x = y \\{ r := x \\}$ | D0 |\n| 2 | $y = z \\{ q := 0 \\}$ | D0 |\n")
+	if got := d.Text(); strings.Contains(got, "```") {
+		t.Errorf("a table was fenced:\n%s", got)
+	}
+}
+
 // A paragraph that arrived fenced is left as it is. The layout path writes
 // its own fences and fencing one twice would put the opening fence inside
 // the listing.
@@ -526,5 +547,36 @@ func TestAParagraphWithAFewSemicolonsIsStillProse(t *testing.T) {
 	})
 	if len(d.Paragraphs) != 1 {
 		t.Fatalf("a sentence broken at a page break came out as %d paragraphs:\n%s", len(d.Paragraphs), d.Text())
+	}
+}
+
+// A page that sets a theorem in the same indented block as the algorithm it
+// is about hands the assembler one paragraph, and the theorem must not end up
+// inside the fence.
+func TestAProseTailIsCutOffAListing(t *testing.T) {
+	d := model("    x := 1;\n    WHILE x < n DO x := x + 1;\n    END;\n    THEOREM 13. *The algorithm takes linear time.*\n    *Proof.* It visits each point once.\n")
+	got := d.Text()
+	if !strings.Contains(got, "```") {
+		t.Fatalf("the listing lost its fence:\n%s", got)
+	}
+	fence := strings.LastIndex(got, "```")
+	if strings.Index(got, "THEOREM 13.") < fence {
+		t.Errorf("the theorem was fenced with the listing:\n%s", got)
+	}
+}
+
+// Emphasis all the way down was never a listing, so nothing is cut off it.
+func TestAParagraphOfProseIsNotCutUp(t *testing.T) {
+	d := model("*Proof.* The bound holds because each point is visited once.\n")
+	if len(d.Paragraphs) != 1 {
+		t.Errorf("assembled %d paragraphs, want 1: %q", len(d.Paragraphs), d.Text())
+	}
+}
+
+// An asterisk in a listing is multiplication, not italics.
+func TestArithmeticIsNotReadAsEmphasis(t *testing.T) {
+	d := model("    a := b * c;\n    d := e * f;\n")
+	if got := d.Text(); !strings.Contains(got, "```") {
+		t.Errorf("a listing of multiplications lost its fence:\n%s", got)
 	}
 }
