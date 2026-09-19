@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/tamnd/papers-reader/assemble"
+	"github.com/tamnd/papers-reader/split"
 )
 
 // Bibliography is the run of paragraphs holding the paper's reference list.
@@ -17,34 +18,58 @@ import (
 // parser that took everything after the heading would file an appendix full
 // of proofs as forty malformed references.
 //
-// The heading is looked for from the end backwards. A paper that says "see
-// the references" in its introduction has the word on page one, and the
-// heading is the last one, not the first.
+// Which heading, when a paper has more than one, is the one with the
+// longest list of numbered entries under it.
+//
+// A paper that says "see the references" in its introduction has the word on
+// page one, and a journal prints it again at the top of every page of a long
+// list. Jacobson's runs over three pages of the SIGCOMM proceedings and the
+// document has References above entry 1, then REFERENCES above entry 6 and
+// REFERENCES again above entry 23, both of them running heads that the
+// furniture pass keeps because a heading is not furniture. Taking the last
+// gave a bibliography of four entries starting at 23, which no citation in
+// the paper could reach, and it is the whole of R02 on that paper: 49
+// citations pointing at an index of four. Counting through the repeats puts
+// all 25 against the first of the three, which wins.
+//
+// A PDF can also carry a second list that is nothing to do with the paper.
+// The Borg PDF closes with a one page errata sheet with two references of
+// its own, and taking the last heading there gave an index whose entries 1
+// and 2 were the errata's and whose entries 3 to 84 were Borg's own 3 to 84,
+// with Borg's first two lost and every citation in the paper off by two.
+// Eighty four beats two, so Borg's own heading wins.
+//
+// Counting stops rather than running on; see listed. Looser is how this goes
+// wrong, because a contents page lists References along with the other
+// headings and a walk that went past anything unnumbered would hand that
+// heading the whole of the paper.
 func Bibliography(d *assemble.Document) []assemble.Paragraph {
 	if d == nil {
 		return nil
 	}
-	start := -1
-	for i := len(d.Paragraphs) - 1; i >= 0; i-- {
-		if isBibliographyHeading(d.Paragraphs[i].Text) {
-			start = i + 1
-			break
-		}
-	}
-	if start < 0 {
+	head, end := span(d)
+	if head < 0 {
 		return nil
 	}
-	end := len(d.Paragraphs)
-	for i := start; i < end; i++ {
-		if endsBibliography(d.Paragraphs[i].Text) {
-			end = i
-			break
+	return gathered(d.Paragraphs[:head+1], unheaded(d.Paragraphs[head+1:end]))
+}
+
+// unheaded is the section with the running heads taken out of it.
+//
+// They have to go, because everything downstream reads the section as
+// entries. The parse cuts at the labels, so a REFERENCES between entry 5 and
+// entry 6 is filed as the last two words of entry 5, and the splitter writes
+// the section from these same paragraphs and would print it in the middle of
+// the reference list.
+func unheaded(ps []assemble.Paragraph) []assemble.Paragraph {
+	out := make([]assemble.Paragraph, 0, len(ps))
+	for _, p := range ps {
+		if isBibliographyHeading(p.Text) {
+			continue
 		}
+		out = append(out, p)
 	}
-	if start >= end {
-		return nil
-	}
-	return gathered(d.Paragraphs[:start], d.Paragraphs[start:end])
+	return out
 }
 
 // Reorder moves the entries the column order scattered back into the
@@ -102,13 +127,22 @@ func Reorder(d *assemble.Document) bool {
 }
 
 // span is the index of the bibliography heading and the index one past the
-// last paragraph of the section, or -1 if the paper has no heading.
+// last paragraph of the section, or -1 if the paper has no heading. The
+// heading it finds is the first of the run of them a list printed over
+// several pages has, so both callers see the whole section.
 func span(d *assemble.Document) (int, int) {
-	head := -1
-	for i := len(d.Paragraphs) - 1; i >= 0; i-- {
-		if isBibliographyHeading(d.Paragraphs[i].Text) {
-			head = i
-			break
+	// The heading with the longest list under it. See Bibliography for the
+	// running heads this walks through and the second bibliography it walks
+	// past, and listed for how far each walk goes. Ties go to the last
+	// heading, which is where a bibliography belongs and is the answer for
+	// every paper whose entries are not numbered in brackets.
+	head, most, tail := -1, -1, -1
+	for i := range d.Paragraphs {
+		if !isBibliographyHeading(d.Paragraphs[i].Text) {
+			continue
+		}
+		if n, t := listed(d.Paragraphs, i+1); n >= most {
+			head, most, tail = i, n, t
 		}
 	}
 	if head < 0 {
@@ -121,10 +155,131 @@ func span(d *assemble.Document) (int, int) {
 			break
 		}
 	}
+	if next := resumes(d.Paragraphs, head); next < end {
+		end = next
+	}
+	// Another list after this one means everything between the two belongs
+	// to the second of them, so this one ends at its own last entry. The
+	// errata sheet at the back of the Borg PDF prints a title, a date and
+	// three short sections of its own before its two references, and without
+	// this the last of Borg's eighty four entries came back with all of that
+	// on the end of it. Nothing is cut where there is no second list, because
+	// what trails the last entry there is the rest of the last entry: four
+	// papers in the corpus set one that runs into a second paragraph, and
+	// three more scatter their last few entries down a column.
+	if tail > head && tail < end && repeated(d.Paragraphs[tail:]) {
+		end = tail
+	}
 	if head+1 >= end {
 		return -1, 0
 	}
 	return head, end
+}
+
+// resumes is where the paper takes up again after a bibliography heading,
+// and is the length of the document for a list nothing follows.
+//
+// The splitter is asked rather than the name list above, because the
+// splitter is what writes the section file and rule R08 is what checks the
+// index and the file agree. A name list can only end the section at a
+// heading somebody thought of, and what follows a bibliography is not
+// always one of those. The Karp PDF is the Springer reprint, and page 2
+// carries the two books the editors of the collection suggest reading under
+// a heading that says References. Under it the reprinted article starts,
+// and nothing on the name list stops the parse there: the index came back
+// with 21 entries of which 19 were Karp's own numbered list of combinatorial
+// problems, read as references because the paper numbers them, and R08
+// reported all 19 of them.
+//
+// It also takes the appendix off the end of the last entry, which is worth
+// as much. An appendix heading does end the section, but only once the
+// entry it is printed under has already swallowed it: MapReduce's last
+// reference came back with the whole of appendix A and its forty line C++
+// listing on the end of it, ResNet's with the first paragraph of the
+// detection baselines, and Saltzer's with the opening of the footnotes.
+// Four papers in the corpus change and the other ninety seven do not.
+//
+// A bibliography heading is walked past, because a list long enough to run
+// over a page has the word printed again at the head of the next one and
+// the splitter reads that repeat as a heading like any other.
+func resumes(ps []assemble.Paragraph, head int) int {
+	texts := make([]string, len(ps))
+	for i := range ps {
+		texts[i] = ps[i].Text
+	}
+	_, hs := split.Headings(texts)
+	for _, h := range hs {
+		if h.Index > head && !isBibliographyHeading(texts[h.Index]) {
+			return h.Index
+		}
+	}
+	return len(ps)
+}
+
+// repeated says whether a bibliography heading stands in a run of
+// paragraphs, which after the end of a list means a second list is coming.
+//
+// The run is the rest of the document and not the rest of the section,
+// because what ends the section can stand between the two lists: the errata
+// sheet heads its own acknowledgements before its own references, and that
+// heading ends any bibliography wherever it is.
+func repeated(ps []assemble.Paragraph) bool {
+	for _, p := range ps {
+		if isBibliographyHeading(p.Text) {
+			return true
+		}
+	}
+	return false
+}
+
+// listed is how many entries counting up follow a bibliography heading.
+//
+// It walks through a bibliography heading, because a list long enough to run
+// over a page has the word printed again at the head of the next one and the
+// count carries straight on through it. Once the count has started it walks
+// through an unlabelled paragraph too, which is what the second half of an
+// entry the reader broke in two looks like.
+//
+// It stops at a heading that only ever comes after a bibliography, at a
+// label that does not carry the count on, and at the first unlabelled
+// paragraph if the count has not started yet. That last one is what keeps a
+// contents page out of this: it lists References along with every other
+// heading, and without the stop the walk would run from the contents page
+// through the whole of the paper and come back with the real bibliography's
+// count against the wrong heading.
+//
+// The second return is the index one past the last entry, and it is only
+// given when the walk stopped on a label that began the numbering again. A
+// second numbered list says that whatever stands between the two lists
+// belongs to the second of them: the errata sheet at the back of the Borg
+// PDF prints a title, a date and three short sections of its own before its
+// two references, and without this the last of Borg's own eighty four
+// entries came back with all of that on the end of it. Otherwise the second
+// return is -1, because a list that simply runs out has nothing to say about
+// where it ends that the heading after it does not say better.
+func listed(ps []assemble.Paragraph, at int) (int, int) {
+	n, last, tail := 0, 0, at
+	for i := at; i < len(ps); i++ {
+		text := ps[i].Text
+		if isBibliographyHeading(text) {
+			continue
+		}
+		if endsBibliography(text) {
+			break
+		}
+		k, ok := labelled(text)
+		if !ok {
+			if n == 0 {
+				break
+			}
+			continue
+		}
+		if n > 0 && k != last+1 {
+			break
+		}
+		n, last, tail = n+1, k, i+1
+	}
+	return n, tail
 }
 
 // counted is the last entry number of a section whose entries count up from

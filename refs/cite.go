@@ -4,13 +4,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/tamnd/papers-reader/markdown"
 )
 
-// citation is an in-text citation in a numbered paper: [31], [2, 3] or a
-// span like [4-7]. Only numbers, because a bracket holding anything else is
-// as likely to be a footnote marker, an editorial insertion or a piece of
-// notation, and rewriting one of those would corrupt the sentence.
-var citation = regexp.MustCompile(`\[(\d{1,3}(?:\s*[-–,]\s*\d{1,3})*)\]`)
+// Where an in-text citation is, is markdown.ReplaceCites. It is shared with
+// the three renderers, because a bracket this package rewrites into a link
+// and a bracket they set as one have to be the same bracket.
 
 // Rewrite turns the in-text citations of a body into links to the corpus.
 //
@@ -30,8 +30,8 @@ func Rewrite(body string, links map[string]string) string {
 		return body
 	}
 	return outsideCode(body, func(prose string) string {
-		return citation.ReplaceAllStringFunc(prose, func(m string) string {
-			return rewriteGroup(m, links)
+		return markdown.ReplaceCites(prose, func(inner string) string {
+			return rewriteGroup(inner, links)
 		})
 	})
 }
@@ -47,8 +47,8 @@ func (m *Manifest) Rewrite(body string) string { return Rewrite(body, m.Links())
 func Citations(body string) []string {
 	var out []string
 	outsideCode(body, func(prose string) string {
-		for _, m := range citation.FindAllStringSubmatch(prose, -1) {
-			out = append(out, expand(m[1])...)
+		for _, group := range markdown.Cites(prose) {
+			out = append(out, expand(group)...)
 		}
 		return prose
 	})
@@ -68,10 +68,12 @@ func Linked(body string) []string {
 	return out
 }
 
-func rewriteGroup(match string, links map[string]string) string {
-	keys := expand(match[1 : len(match)-1])
+// rewriteGroup rewrites one citation group, which arrives without its
+// brackets and goes back with them.
+func rewriteGroup(group string, links map[string]string) string {
+	keys := expand(group)
 	if len(keys) == 0 {
-		return match
+		return "[" + group + "]"
 	}
 	out := make([]string, 0, len(keys))
 	hit := false
@@ -84,7 +86,7 @@ func rewriteGroup(match string, links map[string]string) string {
 		out = append(out, "["+key+"]")
 	}
 	if !hit {
-		return match
+		return "[" + group + "]"
 	}
 	return strings.Join(out, ", ")
 }

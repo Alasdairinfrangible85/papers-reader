@@ -3,6 +3,8 @@ package extract
 import (
 	"regexp"
 	"strings"
+
+	"github.com/tamnd/papers-reader/mathtex"
 )
 
 // Tidy takes the wrapping off an answer.
@@ -53,17 +55,32 @@ import (
 // the time it looks, and a number sign in either of them is the character the
 // page printed just as it is in a formula the reader delimited itself.
 //
+// Undisplay runs before Dollars, because a display of prose is a display
+// the reader never closed and Dollars only pairs a delimiter it can find the
+// other half of. Left to Dollars the opener goes through as the two
+// characters the model wrote and the paragraph is lost inside them.
+//
 // Dollars runs before Untable so that a cell already written in TeX's own
 // delimiters is in this corpus's delimiters by the time the table is read.
 // Untable puts dollars round a cell that is bare TeX, and a cell it had
 // already put dollars round is a cell it must leave alone, so the two have to
 // happen in this order and not the other one.
+//
+// mathtex.Repair runs last, for the same reason Unhash runs late and one more.
+// It writes a stranded character as the TeX it stands for, an α the layer
+// handed over as a letter becoming \alpha, and it can only do that inside a
+// math span, so everything that decides what a span is has to have run first.
+// Shannon's table of filters is the case that showed it: the omegas in it are
+// inside cells that Untable made spans of, and nothing before Untable can see
+// them. The package doc has said all along that extract calls this, and until
+// now nothing did, so the repair existed and only the audit ever ran it.
 func Tidy(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.TrimSpace(s)
 	s = dropPreamble(s)
 	s = dropTrailer(s)
 	s = unwrap(s)
+	s = Undisplay(s)
 	s = Dollars(s)
 	s = Money(s)
 	s = Untable(s)
@@ -71,6 +88,7 @@ func Tidy(s string) string {
 	s = Unhash(s)
 	s = Unlink(s)
 	s = Delink(s)
+	s, _, _ = mathtex.Repair(s)
 	return strings.TrimSpace(s)
 }
 

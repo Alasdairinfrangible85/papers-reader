@@ -349,11 +349,24 @@ func splitOne(c *corpus.Corpus, p corpus.Paper, rec *corpus.Source, force, prune
 		n.notes = append(n.notes, fmt.Sprintf("%s %s", name, what))
 	}
 	if prune {
-		if short, err := partial(c, p.ID, rec); err != nil {
+		dir := c.Content(corpus.EN, p.ID)
+		short, err := partial(c, p.ID, rec)
+		if err != nil {
 			return n, err
-		} else if short != "" {
+		}
+		gone := report.Stale
+		if short != "" {
+			// Part of the paper, so most of what is stale is the rest of it
+			// and has to stay. The exception is a leftover that has taken a
+			// section number this split just used, which is wrong whatever
+			// else is missing. See Collided.
+			gone = report.Collided()
 			n.notes = append(n.notes, short)
-		} else if err := split.Prune(c.Content(corpus.EN, p.ID), report.Stale); err != nil {
+			if len(gone) > 0 {
+				n.notes = append(n.notes, fmt.Sprintf("%d of them share a section number with a file this split wrote and have been deleted anyway", len(gone)))
+			}
+		}
+		if err := split.Prune(dir, gone); err != nil {
 			return n, err
 		}
 	}
@@ -516,6 +529,15 @@ func document(c *corpus.Corpus, id string) (*assemble.Document, error) {
 		})
 	}
 	doc := assemble.Join(pages)
+	// A heading a reader ran into the paragraph under it is separated here
+	// rather than in the splitter, because the index has the same trouble
+	// with it and had no answer for it. Fourteen papers ran References into
+	// their first entry, and three of those are papers whose whole
+	// bibliography the index then failed to find: it looks for the heading
+	// and the heading was inside a paragraph. Rule R08 reported all three,
+	// because what was in the manifest was an older extraction of the same
+	// pages and no longer the text on the page.
+	doc.Paragraphs = split.Unrun(doc.Paragraphs)
 	// Both readers of a document go through here, so the reference list is
 	// put back in order once rather than in each of them. The splitter cuts
 	// the section file from this document and the index is built from the

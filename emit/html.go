@@ -51,6 +51,7 @@ type pager struct {
 	orphans  map[string]bool
 	unlinked map[string]bool
 	dangling map[string]bool
+	gaps     map[string]bool
 
 	held []string
 }
@@ -337,8 +338,7 @@ func (p *pager) holdCites(s string) string {
 	if p.cites == nil {
 		return s
 	}
-	return markdown.NumCite.ReplaceAllStringFunc(s, func(m string) string {
-		inner := m[1 : len(m)-1]
+	return markdown.ReplaceCites(s, func(inner string) string {
 		var b strings.Builder
 		b.WriteString("[")
 		at := 0
@@ -348,7 +348,9 @@ func (p *pager) holdCites(s string) string {
 			if p.cites[n] {
 				fmt.Fprintf(&b, `<a class="cite" href="#ref-%s">%s</a>`, n, n)
 			} else {
-				p.note(&p.dangling, n)
+				if !p.gaps[n] {
+					p.note(&p.dangling, n)
+				}
 				b.WriteString(n)
 			}
 			at = loc[1]
