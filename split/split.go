@@ -143,6 +143,15 @@ type Result struct {
 // 00_front.md.
 func Split(d *assemble.Document) *Result { return Titled(d, "") }
 
+// mastheads is how many headings the title is looked for among.
+//
+// Three. What can stand over a title is the journal's name, the section of
+// the journal, and a doi or a copyright line, and no paper in the corpus
+// prints more than two of them as headings. Searching further would start
+// to reach real sections in a paper whose title never came back as a
+// heading at all.
+const mastheads = 3
+
 // Titled is Split for a paper whose title is known, which lets it tell the
 // title block from the first section.
 //
@@ -158,15 +167,6 @@ func Split(d *assemble.Document) *Result { return Titled(d, "") }
 // is the paper's title, and anything else is a section however it is set. Only
 // the first heading is offered the comparison, because a paper that prints its
 // title again is printing a running head.
-// mastheads is how many headings the title is looked for among.
-//
-// Three. What can stand over a title is the journal's name, the section of
-// the journal, and a doi or a copyright line, and no paper in the corpus
-// prints more than two of them as headings. Searching further would start
-// to reach real sections in a paper whose title never came back as a
-// heading at all.
-const mastheads = 3
-
 func Titled(d *assemble.Document, title string) *Result {
 	// Unrun first, because everything below counts paragraphs and a heading
 	// that is still inside one is a heading nothing here can find.
@@ -175,6 +175,9 @@ func Titled(d *assemble.Document, title string) *Result {
 	// stuck to the first entry is a bibliography that has its heading, and
 	// before the headings are read, because that is the point of it.
 	paragraphs, supplied := headReferences(paragraphs)
+	// After headReferences, so that the heading it supplies is the one the
+	// repeats are measured against rather than one of the repeats.
+	paragraphs, repeats := oneBibliography(paragraphs)
 	texts := make([]string, len(paragraphs))
 	for i, p := range paragraphs {
 		texts[i] = p.Text
@@ -267,6 +270,9 @@ func Titled(d *assemble.Document, title string) *Result {
 	}
 	if supplied {
 		r.Notes = append(r.Notes, "the bibliography has no heading of its own and one was supplied where the entries begin")
+	}
+	if repeats > 0 {
+		r.Notes = append(r.Notes, fmt.Sprintf("the bibliography printed its heading again on %d later pages and the repeats were taken out", repeats))
 	}
 	for _, h := range cuts {
 		if h.How == Typographic {
